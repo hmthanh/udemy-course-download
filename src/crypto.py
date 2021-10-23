@@ -10,8 +10,5 @@ def check_for_mp4decrypt():
     except FileNotFoundError:
         return False
     except Exception as e:
-        print(
-            "> Unexpected exception while checking for MP4Decrypt, please tell the program author about this! ",
-            e)
+        print("> Unexpected exception while checking for MP4Decrypt, please tell the program author about this! ", e)
         return True
-

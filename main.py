@@ -683,9 +683,12 @@ if not os.path.exists(download_dir):
 with open(keyfile_path, 'r') as keyfile:
     keyfile = keyfile.read()
 keyfile = json.loads(keyfile)
+print("sdfsdsdf", keyfile)
+print("sdfsdsdf", keyfile[0])
+print("sdfsdsdf", keyfile[1])
 
 
-def decrypt(kid, in_filepath, out_filepath):
+def decrypt(kid, in_filepath, out_filepath, key_id="", key=""):
     """
     @author Jayapraveen
     """
