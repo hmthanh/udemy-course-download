@@ -683,19 +683,16 @@ if not os.path.exists(download_dir):
 with open(keyfile_path, 'r') as keyfile:
     keyfile = keyfile.read()
 keyfile = json.loads(keyfile)
-print("sdfsdsdf", keyfile)
-print("sdfsdsdf", keyfile[0])
-print("sdfsdsdf", keyfile[1])
 
 
-def decrypt(kid, in_filepath, out_filepath, key_id="", key=""):
+def decrypt(kid, in_filepath, out_filepath, keyfiles_encrypt=None):
     """
     @author Jayapraveen
     """
     print("> Decrypting, this might take a minute...")
     try:
         key = keyfile[kid.lower()]
-        if (os.name == "nt"):
+        if os.name == "nt":
             os.system(f"mp4decrypt --key 1:%s \"%s\" \"%s\"" %
                       (key, in_filepath, out_filepath))
         else:
@@ -707,7 +704,7 @@ def decrypt(kid, in_filepath, out_filepath, key_id="", key=""):
 
 
 def handle_segments(url, format_id, video_title,
-                    output_path, lecture_file_name, concurrent_connections, chapter_dir):
+                    output_path, lecture_file_name, concurrent_connections, chapter_dir, keyfiles_encrypt=None):
     os.chdir(os.path.join(chapter_dir))
     file_name = lecture_file_name.replace("%", "").replace(".mp4", "")
     video_filepath_enc = file_name + ".encrypted.mp4"
@@ -735,8 +732,8 @@ def handle_segments(url, format_id, video_title,
     print("KID for audio file is: " + audio_kid)
 
     try:
-        decrypt(video_kid, video_filepath_enc, video_filepath_dec)
-        decrypt(audio_kid, audio_filepath_enc, audio_filepath_dec)
+        decrypt(video_kid, video_filepath_enc, video_filepath_dec, keyfiles_encrypt)
+        decrypt(audio_kid, audio_filepath_enc, audio_filepath_dec, keyfiles_encrypt)
         mux_process(video_title, video_filepath_dec, audio_filepath_dec,
                     output_path)
         os.remove(video_filepath_enc)
@@ -785,7 +782,7 @@ def process_caption(caption, lecture_title, lecture_dir, keep_vtt, tries=0):
 
 
 def process_lecture(lecture, lecture_path, lecture_file_name, quality, access_token,
-                    concurrent_connections, chapter_dir):
+                    concurrent_connections, chapter_dir, keyfiles_encrypt=None):
     lecture_title = lecture.get("lecture_title")
     is_encrypted = lecture.get("is_encrypted")
     lecture_sources = lecture.get("video_sources")
@@ -802,7 +799,7 @@ def process_lecture(lecture, lecture_path, lecture_file_name, quality, access_to
             handle_segments(source.get("download_url"),
                             source.get(
                                 "format_id"), lecture_title, lecture_path, lecture_file_name,
-                            concurrent_connections, chapter_dir)
+                            concurrent_connections, chapter_dir, keyfiles_encrypt)
         else:
             print(f"      > Lecture '%s' is missing media links" %
                   lecture_title)
@@ -852,7 +849,7 @@ def process_lecture(lecture, lecture_path, lecture_file_name, quality, access_to
 
 
 def parse_new(_udemy, quality, skip_lectures, dl_assets, dl_captions,
-              caption_locale, keep_vtt, access_token, concurrent_connections):
+              caption_locale, keep_vtt, access_token, concurrent_connections, keyfiles_encrypt=None):
     total_chapters = _udemy.get("total_chapters")
     total_lectures = _udemy.get("total_lectures")
     print(f"Chapter(s) ({total_chapters})")
@@ -913,7 +910,7 @@ def parse_new(_udemy, quality, skip_lectures, dl_assets, dl_captions,
                     else:
                         process_lecture(lecture, lecture_path, lecture_file_name,
                                         quality, access_token,
-                                        concurrent_connections, chapter_dir)
+                                        concurrent_connections, chapter_dir, keyfiles_encrypt)
 
             if dl_assets:
                 assets = lecture.get("assets")
@@ -986,62 +983,7 @@ def parse_new(_udemy, quality, skip_lectures, dl_assets, dl_captions,
                                         keep_vtt)
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Udemy Downloader')
-    parser.add_argument("-c", "--course-url", dest="course_url", type=str, help="The URL of the course to download",
-                        required=True)
-    parser.add_argument(
-        "-b", "--bearer", dest="bearer_token", type=str,
-        help="The Bearer token to use",
-    )
-    parser.add_argument(
-        "-q", "--quality", dest="quality", type=int,
-        help="Download specific video quality. If the requested quality isn't available, the closest quality will be used. If not specified, the best quality will be downloaded for each lecture",
-    )
-    parser.add_argument(
-        "-l", "--lang", dest="lang", type=str,
-        help="The language to download for captions, specify 'all' to download all captions (Default is 'en')",
-    )
-    parser.add_argument(
-        "-cd", "--concurrent-downloads", dest="concurrent_downloads", type=int,
-        help="The number of maximum concurrent downloads for segments (HLS and DASH, must be a number 1-30)",
-    )
-    parser.add_argument(
-        "--skip-lectures", dest="skip_lectures", action="store_true",
-        help="If specified, lectures won't be downloaded",
-    )
-    parser.add_argument(
-        "--download-assets", dest="download_assets", action="store_true",
-        help="If specified, lecture assets will be downloaded",
-    )
-    parser.add_argument(
-        "--download-captions", dest="download_captions", action="store_true",
-        help="If specified, captions will be downloaded",
-    )
-    parser.add_argument(
-        "--keep-vtt", dest="keep_vtt", action="store_true",
-        help="If specified, .vtt files won't be removed",
-    )
-    parser.add_argument(
-        "--skip-hls", dest="skip_hls", action="store_true",
-        help="If specified, hls streams will be skipped (faster fetching) (hls streams usually contain 1080p quality for non-drm lectures)",
-    )
-    parser.add_argument(
-        "--info", dest="info", action="store_true",
-        help="If specified, only course information will be printed, nothing will be downloaded",
-    )
-    parser.add_argument(
-        "--save-to-file", dest="save_to_file", action="store_true",
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument(
-        "--load-from-file", dest="load_from_file", action="store_true",
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument("-v", "--version", action="version",
-                        version='You are running version {version}'.format(version=__version__))
-    args = parser.parse_args()
-
+def get_course_udemy(args):
     dl_assets = False
     skip_lectures = False
     dl_captions = False
@@ -1053,6 +995,8 @@ if __name__ == "__main__":
     keep_vtt = False
     skip_hls = False
     concurrent_downloads = 10
+
+    keyfiles_encrypt = None
 
     if args.download_assets:
         dl_assets = True
@@ -1134,11 +1078,9 @@ if __name__ == "__main__":
         course_title = course_json.get("published_title")
         portal_name = course_json.get("portal_name")
     else:
-        course_json = udemy._extract_course_json(args.course_url, course_id,
-                                                 portal_name)
+        course_json = udemy._extract_course_json(args.course_url, course_id, portal_name)
     if args.save_to_file:
-        with open(os.path.join(os.getcwd(), "saved", "course_content.json"),
-                  'w') as f:
+        with open(os.path.join(os.getcwd(), "saved", "course_content.json"), 'w') as f:
             f.write(json.dumps(course_json))
             f.close()
 
@@ -1154,7 +1096,7 @@ if __name__ == "__main__":
         else:
             parse_new(_udemy, quality, skip_lectures, dl_assets, dl_captions,
                       caption_locale, keep_vtt, access_token,
-                      concurrent_downloads)
+                      concurrent_downloads, keyfiles_encrypt)
     else:
         _udemy = {}
         _udemy["access_token"] = access_token
@@ -1169,213 +1111,205 @@ if __name__ == "__main__":
             udemy.session.terminate()
             print("> Logged out.")
 
-        if course:
-            print("> Processing course data, this may take a minute. ")
-            lecture_counter = 0
-            for entry in course:
-                clazz = entry.get("_class")
-                asset = entry.get("asset")
-                supp_assets = entry.get("supplementary_assets")
+        print("> Processing course data, this may take a minute. ")
+        lecture_counter = 0
+        for entry in course:
+            clazz = entry.get("_class")
+            asset = entry.get("asset")
+            supp_assets = entry.get("supplementary_assets")
 
-                if clazz == "chapter":
-                    lecture_counter = 0
+            if clazz == "chapter":
+                lecture_counter = 0
+                lectures = []
+                chapter_index = entry.get("object_index")
+                chapter_title = "{0:02d} - ".format(chapter_index) + _clean(
+                    entry.get("title"))
+
+                if chapter_title not in _udemy["chapters"]:
+                    _udemy["chapters"].append({
+                        "chapter_title": chapter_title,
+                        "chapter_id": entry.get("id"),
+                        "chapter_index": chapter_index,
+                        "lectures": []
+                    })
+                    counter += 1
+            elif clazz == "lecture":
+                lecture_counter += 1
+                lecture_id = entry.get("id")
+                if len(_udemy["chapters"]) == 0:
                     lectures = []
                     chapter_index = entry.get("object_index")
-                    chapter_title = "{0:02d} - ".format(chapter_index) + _clean(
-                        entry.get("title"))
-
+                    chapter_title = "{0:02d} - ".format(
+                        chapter_index) + _clean(entry.get("title"))
                     if chapter_title not in _udemy["chapters"]:
                         _udemy["chapters"].append({
                             "chapter_title": chapter_title,
-                            "chapter_id": entry.get("id"),
+                            "chapter_id": lecture_id,
                             "chapter_index": chapter_index,
                             "lectures": []
                         })
                         counter += 1
-                elif clazz == "lecture":
-                    lecture_counter += 1
-                    lecture_id = entry.get("id")
-                    if len(_udemy["chapters"]) == 0:
-                        lectures = []
-                        chapter_index = entry.get("object_index")
-                        chapter_title = "{0:02d} - ".format(
-                            chapter_index) + _clean(entry.get("title"))
-                        if chapter_title not in _udemy["chapters"]:
-                            _udemy["chapters"].append({
-                                "chapter_title": chapter_title,
-                                "chapter_id": lecture_id,
-                                "chapter_index": chapter_index,
-                                "lectures": []
+
+                if lecture_id:
+                    print(f"Processing {course.index(entry)} of {len(course)}")
+                    retVal = []
+
+                    if isinstance(asset, dict):
+                        asset_type = (asset.get("asset_type").lower() or asset.get("assetType").lower)
+                        if asset_type == "article":
+                            if isinstance(supp_assets, list) and len(supp_assets) > 0:
+                                retVal = udemy._extract_supplementary_assets(supp_assets)
+                        elif asset_type == "video":
+                            if isinstance(supp_assets, list) and len(supp_assets) > 0:
+                                retVal = udemy._extract_supplementary_assets(supp_assets)
+                        elif asset_type == "e-book":
+                            retVal = udemy._extract_ebook(asset)
+                        elif asset_type == "file":
+                            retVal = udemy._extract_file(asset)
+                        elif asset_type == "presentation":
+                            retVal = udemy._extract_ppt(asset)
+                        elif asset_type == "audio":
+                            retVal = udemy._extract_audio(asset)
+
+                    lecture_index = entry.get("object_index")
+                    lecture_title = "{0:03d} ".format(
+                        lecture_counter) + _clean(entry.get("title"))
+
+                    if asset.get("stream_urls") != None:
+                        # not encrypted
+                        data = asset.get("stream_urls")
+                        if data and isinstance(data, dict):
+                            sources = data.get("Video")
+                            tracks = asset.get("captions")
+                            # duration = asset.get("time_estimation")
+                            sources = udemy._extract_sources(
+                                sources, skip_hls)
+                            subtitles = udemy._extract_subtitles(tracks)
+                            sources_count = len(sources)
+                            subtitle_count = len(subtitles)
+                            lectures.append({
+                                "index": lecture_counter,
+                                "lecture_index": lecture_index,
+                                "lecture_id": lecture_id,
+                                "lecture_title": lecture_title,
+                                # "duration": duration,
+                                "assets": retVal,
+                                "assets_count": len(retVal),
+                                "sources": sources,
+                                "subtitles": subtitles,
+                                "subtitle_count": subtitle_count,
+                                "sources_count": sources_count,
+                                "is_encrypted": False,
+                                "asset_id": asset.get("id")
                             })
-                            counter += 1
-
-                    if lecture_id:
-                        print(
-                            f"Processing {course.index(entry)} of {len(course)}"
-                        )
-                        retVal = []
-
-                        if isinstance(asset, dict):
-                            asset_type = (asset.get("asset_type").lower()
-                                          or asset.get("assetType").lower)
-                            if asset_type == "article":
-                                if isinstance(supp_assets,
-                                              list) and len(supp_assets) > 0:
-                                    retVal = udemy._extract_supplementary_assets(
-                                        supp_assets)
-                            elif asset_type == "video":
-                                if isinstance(supp_assets,
-                                              list) and len(supp_assets) > 0:
-                                    retVal = udemy._extract_supplementary_assets(
-                                        supp_assets)
-                            elif asset_type == "e-book":
-                                retVal = udemy._extract_ebook(asset)
-                            elif asset_type == "file":
-                                retVal = udemy._extract_file(asset)
-                            elif asset_type == "presentation":
-                                retVal = udemy._extract_ppt(asset)
-                            elif asset_type == "audio":
-                                retVal = udemy._extract_audio(asset)
-
-                        lecture_index = entry.get("object_index")
-                        lecture_title = "{0:03d} ".format(
-                            lecture_counter) + _clean(entry.get("title"))
-
-                        if asset.get("stream_urls") != None:
-                            # not encrypted
-                            data = asset.get("stream_urls")
-                            if data and isinstance(data, dict):
-                                sources = data.get("Video")
-                                tracks = asset.get("captions")
-                                # duration = asset.get("time_estimation")
-                                sources = udemy._extract_sources(
-                                    sources, skip_hls)
-                                subtitles = udemy._extract_subtitles(tracks)
-                                sources_count = len(sources)
-                                subtitle_count = len(subtitles)
-                                lectures.append({
-                                    "index": lecture_counter,
-                                    "lecture_index": lecture_index,
-                                    "lecture_id": lecture_id,
-                                    "lecture_title": lecture_title,
-                                    # "duration": duration,
-                                    "assets": retVal,
-                                    "assets_count": len(retVal),
-                                    "sources": sources,
-                                    "subtitles": subtitles,
-                                    "subtitle_count": subtitle_count,
-                                    "sources_count": sources_count,
-                                    "is_encrypted": False,
-                                    "asset_id": asset.get("id")
-                                })
-                            else:
-                                lectures.append({
-                                    "index":
-                                        lecture_counter,
-                                    "lecture_index":
-                                        lecture_index,
-                                    "lectures_id":
-                                        lecture_id,
-                                    "lecture_title":
-                                        lecture_title,
-                                    "html_content":
-                                        asset.get("body"),
-                                    "extension":
-                                        "html",
-                                    "assets":
-                                        retVal,
-                                    "assets_count":
-                                        len(retVal),
-                                    "subtitle_count":
-                                        0,
-                                    "sources_count":
-                                        0,
-                                    "is_encrypted":
-                                        False,
-                                    "asset_id":
-                                        asset.get("id")
-                                })
                         else:
-                            # encrypted
-                            data = asset.get("media_sources")
-                            if data and isinstance(data, list):
-                                sources = udemy._extract_media_sources(data)
-                                tracks = asset.get("captions")
-                                # duration = asset.get("time_estimation")
-                                subtitles = udemy._extract_subtitles(tracks)
-                                sources_count = len(sources)
-                                subtitle_count = len(subtitles)
-                                lectures.append({
-                                    "index": lecture_counter,
-                                    "lecture_index": lecture_index,
-                                    "lectures_id": lecture_id,
-                                    "lecture_title": lecture_title,
-                                    # "duration": duration,
-                                    "assets": retVal,
-                                    "assets_count": len(retVal),
-                                    "video_sources": sources,
-                                    "subtitles": subtitles,
-                                    "subtitle_count": subtitle_count,
-                                    "sources_count": sources_count,
-                                    "is_encrypted": True,
-                                    "asset_id": asset.get("id")
-                                })
-                            else:
-                                lectures.append({
-                                    "index":
-                                        lecture_counter,
-                                    "lecture_index":
-                                        lecture_index,
-                                    "lectures_id":
-                                        lecture_id,
-                                    "lecture_title":
-                                        lecture_title,
-                                    "html_content":
-                                        asset.get("body"),
-                                    "extension":
-                                        "html",
-                                    "assets":
-                                        retVal,
-                                    "assets_count":
-                                        len(retVal),
-                                    "subtitle_count":
-                                        0,
-                                    "sources_count":
-                                        0,
-                                    "is_encrypted":
-                                        False,
-                                    "asset_id":
-                                        asset.get("id")
-                                })
-                    _udemy["chapters"][counter]["lectures"] = lectures
-                    _udemy["chapters"][counter]["lecture_count"] = len(
-                        lectures)
-                elif clazz == "quiz":
-                    lecture_id = entry.get("id")
-                    if len(_udemy["chapters"]) == 0:
-                        lectures = []
-                        chapter_index = entry.get("object_index")
-                        chapter_title = "{0:02d} - ".format(
-                            chapter_index) + _clean(entry.get("title"))
-                        if chapter_title not in _udemy["chapters"]:
-                            lecture_counter = 0
-                            _udemy["chapters"].append({
-                                "chapter_title": chapter_title,
-                                "chapter_id": lecture_id,
-                                "chapter_index": chapter_index,
-                                "lectures": [],
+                            lectures.append({
+                                "index":
+                                    lecture_counter,
+                                "lecture_index":
+                                    lecture_index,
+                                "lectures_id":
+                                    lecture_id,
+                                "lecture_title":
+                                    lecture_title,
+                                "html_content":
+                                    asset.get("body"),
+                                "extension":
+                                    "html",
+                                "assets":
+                                    retVal,
+                                "assets_count":
+                                    len(retVal),
+                                "subtitle_count":
+                                    0,
+                                "sources_count":
+                                    0,
+                                "is_encrypted":
+                                    False,
+                                "asset_id":
+                                    asset.get("id")
                             })
-                            counter += 1
+                    else:
+                        # encrypted
+                        data = asset.get("media_sources")
+                        if data and isinstance(data, list):
+                            sources = udemy._extract_media_sources(data)
+                            tracks = asset.get("captions")
+                            # duration = asset.get("time_estimation")
+                            subtitles = udemy._extract_subtitles(tracks)
+                            sources_count = len(sources)
+                            subtitle_count = len(subtitles)
+                            lectures.append({
+                                "index": lecture_counter,
+                                "lecture_index": lecture_index,
+                                "lectures_id": lecture_id,
+                                "lecture_title": lecture_title,
+                                # "duration": duration,
+                                "assets": retVal,
+                                "assets_count": len(retVal),
+                                "video_sources": sources,
+                                "subtitles": subtitles,
+                                "subtitle_count": subtitle_count,
+                                "sources_count": sources_count,
+                                "is_encrypted": True,
+                                "asset_id": asset.get("id")
+                            })
+                        else:
+                            lectures.append({
+                                "index":
+                                    lecture_counter,
+                                "lecture_index":
+                                    lecture_index,
+                                "lectures_id":
+                                    lecture_id,
+                                "lecture_title":
+                                    lecture_title,
+                                "html_content":
+                                    asset.get("body"),
+                                "extension":
+                                    "html",
+                                "assets":
+                                    retVal,
+                                "assets_count":
+                                    len(retVal),
+                                "subtitle_count":
+                                    0,
+                                "sources_count":
+                                    0,
+                                "is_encrypted":
+                                    False,
+                                "asset_id":
+                                    asset.get("id")
+                            })
+                _udemy["chapters"][counter]["lectures"] = lectures
+                _udemy["chapters"][counter]["lecture_count"] = len(
+                    lectures)
+            elif clazz == "quiz":
+                lecture_id = entry.get("id")
+                if len(_udemy["chapters"]) == 0:
+                    lectures = []
+                    chapter_index = entry.get("object_index")
+                    chapter_title = "{0:02d} - ".format(
+                        chapter_index) + _clean(entry.get("title"))
+                    if chapter_title not in _udemy["chapters"]:
+                        lecture_counter = 0
+                        _udemy["chapters"].append({
+                            "chapter_title": chapter_title,
+                            "chapter_id": lecture_id,
+                            "chapter_index": chapter_index,
+                            "lectures": [],
+                        })
+                        counter += 1
 
-                    _udemy["chapters"][counter]["lectures"] = lectures
-                    _udemy["chapters"][counter]["lectures_count"] = len(
-                        lectures)
+                _udemy["chapters"][counter]["lectures"] = lectures
+                _udemy["chapters"][counter]["lectures_count"] = len(
+                    lectures)
 
-            _udemy["total_chapters"] = len(_udemy["chapters"])
-            _udemy["total_lectures"] = sum([
-                entry.get("lecture_count", 0) for entry in _udemy["chapters"]
-                if entry
-            ])
+        _udemy["total_chapters"] = len(_udemy["chapters"])
+        _udemy["total_lectures"] = sum([
+            entry.get("lecture_count", 0) for entry in _udemy["chapters"]
+            if entry
+        ])
 
         if args.save_to_file:
             with open(os.path.join(os.getcwd(), "saved", "_udemy.json"),
@@ -1389,4 +1323,66 @@ if __name__ == "__main__":
         else:
             parse_new(_udemy, quality, skip_lectures, dl_assets, dl_captions,
                       caption_locale, keep_vtt, access_token,
-                      concurrent_downloads)
+                      concurrent_downloads, keyfiles_encrypt)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='Udemy Downloader')
+    parser.add_argument("-c", "--course-url", dest="course_url", type=str, help="The URL of the course to download")
+    parser.add_argument(
+        "-b", "--bearer", dest="bearer_token", type=str,
+        help="The Bearer token to use",
+    )
+    parser.add_argument(
+        "-q", "--quality", dest="quality", type=int,
+        help="Download specific video quality. If the requested quality isn't available, the closest quality will be used. If not specified, the best quality will be downloaded for each lecture",
+    )
+    parser.add_argument(
+        "-l", "--lang", dest="lang", type=str,
+        help="The language to download for captions, specify 'all' to download all captions (Default is 'en')",
+    )
+    parser.add_argument(
+        "-cd", "--concurrent-downloads", dest="concurrent_downloads", type=int,
+        help="The number of maximum concurrent downloads for segments (HLS and DASH, must be a number 1-30)",
+    )
+    parser.add_argument(
+        "--skip-lectures", dest="skip_lectures", action="store_true",
+        help="If specified, lectures won't be downloaded",
+    )
+    parser.add_argument(
+        "--download-assets", dest="download_assets", action="store_true",
+        help="If specified, lecture assets will be downloaded",
+    )
+    parser.add_argument(
+        "--download-captions", dest="download_captions", action="store_true",
+        help="If specified, captions will be downloaded",
+    )
+    parser.add_argument(
+        "--keep-vtt", dest="keep_vtt", action="store_true",
+        help="If specified, .vtt files won't be removed",
+    )
+    parser.add_argument(
+        "--skip-hls", dest="skip_hls", action="store_true",
+        help="If specified, hls streams will be skipped (faster fetching) (hls streams usually contain 1080p quality for non-drm lectures)",
+    )
+    parser.add_argument(
+        "--info", dest="info", action="store_true",
+        help="If specified, only course information will be printed, nothing will be downloaded",
+    )
+    parser.add_argument(
+        "--save-to-file", dest="save_to_file", action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--load-from-file", dest="load_from_file", action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument("-v", "--version", action="version",
+                        version='You are running version {version}'.format(version=__version__))
+    args = parser.parse_args()
+
+    args.course_url = "https://fpt-software.udemy.com/course/grpc-csharp"
+    args.keyfiles_encrypt = {"198429f5c56c419ab32af7f3d763d6d5": "08fe8610e772b69ef37d5ac23c5f614c"}
+    args.bearer_token = "0dVcR5LCz0YsjL8sG6kYHSPjhR0bvwGdxWlrJ2Jh"
+
+    get_course_udemy(args)
