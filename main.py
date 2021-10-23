@@ -985,91 +985,59 @@ def parse_new(_udemy, quality, skip_lectures, dl_assets, dl_captions,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Udemy Downloader')
-    parser.add_argument("-c",
-                        "--course-url",
-                        dest="course_url",
-                        type=str,
-                        help="The URL of the course to download",
+    parser.add_argument("-c", "--course-url", dest="course_url", type=str, help="The URL of the course to download",
                         required=True)
     parser.add_argument(
-        "-b",
-        "--bearer",
-        dest="bearer_token",
-        type=str,
+        "-b", "--bearer", dest="bearer_token", type=str,
         help="The Bearer token to use",
     )
     parser.add_argument(
-        "-q",
-        "--quality",
-        dest="quality",
-        type=int,
+        "-q", "--quality", dest="quality", type=int,
         help="Download specific video quality. If the requested quality isn't available, the closest quality will be used. If not specified, the best quality will be downloaded for each lecture",
     )
     parser.add_argument(
-        "-l",
-        "--lang",
-        dest="lang",
-        type=str,
+        "-l", "--lang", dest="lang", type=str,
         help="The language to download for captions, specify 'all' to download all captions (Default is 'en')",
     )
     parser.add_argument(
-        "-cd",
-        "--concurrent-downloads",
-        dest="concurrent_downloads",
-        type=int,
+        "-cd", "--concurrent-downloads", dest="concurrent_downloads", type=int,
         help="The number of maximum concurrent downloads for segments (HLS and DASH, must be a number 1-30)",
     )
     parser.add_argument(
-        "--skip-lectures",
-        dest="skip_lectures",
-        action="store_true",
+        "--skip-lectures", dest="skip_lectures", action="store_true",
         help="If specified, lectures won't be downloaded",
     )
     parser.add_argument(
-        "--download-assets",
-        dest="download_assets",
-        action="store_true",
+        "--download-assets", dest="download_assets", action="store_true",
         help="If specified, lecture assets will be downloaded",
     )
     parser.add_argument(
-        "--download-captions",
-        dest="download_captions",
-        action="store_true",
+        "--download-captions", dest="download_captions", action="store_true",
         help="If specified, captions will be downloaded",
     )
     parser.add_argument(
-        "--keep-vtt",
-        dest="keep_vtt",
-        action="store_true",
+        "--keep-vtt", dest="keep_vtt", action="store_true",
         help="If specified, .vtt files won't be removed",
     )
     parser.add_argument(
-        "--skip-hls",
-        dest="skip_hls",
-        action="store_true",
+        "--skip-hls", dest="skip_hls", action="store_true",
         help="If specified, hls streams will be skipped (faster fetching) (hls streams usually contain 1080p quality for non-drm lectures)",
     )
     parser.add_argument(
-        "--info",
-        dest="info",
-        action="store_true",
+        "--info", dest="info", action="store_true",
         help="If specified, only course information will be printed, nothing will be downloaded",
     )
-
     parser.add_argument(
-        "--save-to-file",
-        dest="save_to_file",
-        action="store_true",
+        "--save-to-file", dest="save_to_file", action="store_true",
         help=argparse.SUPPRESS,
     )
     parser.add_argument(
-        "--load-from-file",
-        dest="load_from_file",
-        action="store_true",
+        "--load-from-file", dest="load_from_file", action="store_true",
         help=argparse.SUPPRESS,
     )
     parser.add_argument("-v", "--version", action="version",
                         version='You are running version {version}'.format(version=__version__))
+    args = parser.parse_args()
 
     dl_assets = False
     skip_lectures = False
@@ -1083,7 +1051,6 @@ if __name__ == "__main__":
     skip_hls = False
     concurrent_downloads = 10
 
-    args = parser.parse_args()
     if args.download_assets:
         dl_assets = True
     if args.lang:
