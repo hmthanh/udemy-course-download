@@ -25,6 +25,7 @@ from _version import __version__
 home_dir = os.getcwd()
 download_dir = os.path.join(os.getcwd(), "out_dir")
 keyfile_path = os.path.join(os.getcwd(), "keyfile.json")
+info_data = os.path.join(os.getcwd(), "info.csv")
 retry = 3
 downloader = None
 HEADERS = {
@@ -47,6 +48,7 @@ class Udemy:
     def __init__(self, access_token):
         self.session = None
         self.access_token = None
+        self.asset = None
         self.auth = UdemyAuth(cache_session=False)
         if not self.session:
             self.session, self.access_token = self.auth.authenticate(
@@ -679,19 +681,19 @@ class UdemyAuth(object):
 if not os.path.exists(download_dir):
     os.makedirs(download_dir)
 
-# Get the keys
-with open(keyfile_path, 'r') as keyfile:
-    keyfile = keyfile.read()
-keyfile = json.loads(keyfile)
+# # Get the keys
+# with open(keyfile_path, 'r') as keyfile:
+#     keyfile = keyfile.read()
+# keyfile = json.loads(keyfile)
 
 
-def decrypt(kid, in_filepath, out_filepath, keyfiles_encrypt=None):
+def decrypt(kid, in_filepath, out_filepath, keyfiles_encrypt):
     """
     @author Jayapraveen
     """
     print("> Decrypting, this might take a minute...")
     try:
-        key = keyfile[kid.lower()]
+        key = keyfiles_encrypt[kid.lower()]
         if os.name == "nt":
             os.system(f"mp4decrypt --key 1:%s \"%s\" \"%s\"" %
                       (key, in_filepath, out_filepath))
@@ -704,7 +706,7 @@ def decrypt(kid, in_filepath, out_filepath, keyfiles_encrypt=None):
 
 
 def handle_segments(url, format_id, video_title,
-                    output_path, lecture_file_name, concurrent_connections, chapter_dir, keyfiles_encrypt=None):
+                    output_path, lecture_file_name, concurrent_connections, chapter_dir, keyfiles_encrypt):
     os.chdir(os.path.join(chapter_dir))
     file_name = lecture_file_name.replace("%", "").replace(".mp4", "")
     video_filepath_enc = file_name + ".encrypted.mp4"
@@ -782,7 +784,7 @@ def process_caption(caption, lecture_title, lecture_dir, keep_vtt, tries=0):
 
 
 def process_lecture(lecture, lecture_path, lecture_file_name, quality, access_token,
-                    concurrent_connections, chapter_dir, keyfiles_encrypt=None):
+                    concurrent_connections, chapter_dir, keyfiles_encrypt):
     lecture_title = lecture.get("lecture_title")
     is_encrypted = lecture.get("is_encrypted")
     lecture_sources = lecture.get("video_sources")
@@ -849,7 +851,7 @@ def process_lecture(lecture, lecture_path, lecture_file_name, quality, access_to
 
 
 def parse_new(_udemy, quality, skip_lectures, dl_assets, dl_captions,
-              caption_locale, keep_vtt, access_token, concurrent_connections, keyfiles_encrypt=None):
+              caption_locale, keep_vtt, access_token, concurrent_connections, keyfiles_encrypt):
     total_chapters = _udemy.get("total_chapters")
     total_lectures = _udemy.get("total_lectures")
     print(f"Chapter(s) ({total_chapters})")
@@ -984,10 +986,10 @@ def parse_new(_udemy, quality, skip_lectures, dl_assets, dl_captions,
 
 
 def get_course_udemy(args):
-    dl_assets = False
+    dl_assets = True
     skip_lectures = False
-    dl_captions = False
-    caption_locale = "en"
+    dl_captions = True
+    caption_locale = "all"
     quality = None
     bearer_token = None
     portal_name = None
@@ -998,6 +1000,8 @@ def get_course_udemy(args):
 
     keyfiles_encrypt = None
 
+    if args.keyfiles_encrypt:
+        keyfiles_encrypt = args.keyfiles_encrypt
     if args.download_assets:
         dl_assets = True
     if args.lang:
@@ -1034,29 +1038,24 @@ def get_course_udemy(args):
 
     mp4decrypt_ret_val = check_for_mp4decrypt()
     if not mp4decrypt_ret_val:
-        print(
-            "> MP4Decrypt is missing from your system or path! (This is part of Bento4 tools)"
-        )
+        print("> MP4Decrypt is missing from your system or path! (This is part of Bento4 tools)")
         sys.exit(1)
 
     if args.load_from_file:
-        print(
-            "> 'load_from_file' was specified, data will be loaded from json files instead of fetched"
-        )
+        print("> 'load_from_file' was specified, data will be loaded from json files instead of fetched")
     if args.save_to_file:
-        print(
-            "> 'save_to_file' was specified, data will be saved to json files")
+        print("> 'save_to_file' was specified, data will be saved to json files")
 
     if not os.path.isfile(keyfile_path):
         print("> Keyfile not found! Did you rename the file correctly?")
         sys.exit(1)
 
-    load_dotenv()
     access_token = None
     if args.bearer_token:
         access_token = args.bearer_token
     else:
-        access_token = os.getenv("UDEMY_BEARER")
+        print("> Don't have Bearer_token")
+        sys.exit(1)
 
     udemy = Udemy(access_token)
 
@@ -1383,6 +1382,12 @@ if __name__ == "__main__":
 
     args.course_url = "https://fpt-software.udemy.com/course/grpc-csharp"
     args.keyfiles_encrypt = {"198429f5c56c419ab32af7f3d763d6d5": "08fe8610e772b69ef37d5ac23c5f614c"}
+    args.bearer_token = "0dVcR5LCz0YsjL8sG6kYHSPjhR0bvwGdxWlrJ2Jh"
+
+    get_course_udemy(args)
+
+    args.course_url = "https://fpt-software.udemy.com/course/grpc-nodejs"
+    args.keyfiles_encrypt = {"a327fa9c81a844fb80cc889be9809468": "adc0bd36f032b0a4fbcce6cacf993103"}
     args.bearer_token = "0dVcR5LCz0YsjL8sG6kYHSPjhR0bvwGdxWlrJ2Jh"
 
     get_course_udemy(args)
