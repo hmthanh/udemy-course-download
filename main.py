@@ -10,13 +10,16 @@ import cloudscraper
 import m3u8
 import requests
 import yt_dlp
-from html.parser import HTMLParser as compat_HTMLParser
 from dotenv import load_dotenv
 from requests.exceptions import ConnectionError as conn_error
-from tqdm import tqdm
-from sanitize import sanitize, slugify, SLUG_OK
 from utils import extract_kid
 from vtt_to_srt import convert
+from utils import sanitize, _clean, cleanup
+from src.course import _print_course_info
+from src.text_utils import hidden_inputs, search_regex, extract_attributes
+from src.video_utils import mux_process, check_for_ffmpeg, check_for_aria, durationtoseconds
+from src.crypto import check_for_mp4decrypt
+from src.download import download_aria
 from _version import __version__
 
 home_dir = os.getcwd()
@@ -38,19 +41,6 @@ COURSE_SEARCH = "https://{portal_name}.udemy.com/api-2.0/users/me/subscribed-cou
 SUBSCRIBED_COURSES = "https://{portal_name}.udemy.com/api-2.0/users/me/subscribed-courses/?ordering=-last_accessed&fields[course]=id,title,url&page=1&page_size=12"
 MY_COURSES_URL = "https://{portal_name}.udemy.com/api-2.0/users/me/subscribed-courses?fields[course]=id,url,title,published_title&ordering=-last_accessed,-access_time&page=1&page_size=10000"
 COLLECTION_URL = "https://{portal_name}.udemy.com/api-2.0/users/me/subscribed-courses-collections/?collection_has_courses=True&course_limit=20&fields[course]=last_accessed_time,title,published_title&fields[user_has_subscribed_courses_collection]=@all&page=1&page_size=1000"
-
-
-def _clean(text):
-    ok = re.compile(r'[^\\/:*?!"<>|]')
-    text = "".join(x if ok.match(x) else "_" for x in text)
-    text = re.sub(r"\.+$", "", text.strip())
-    return text
-
-
-def _sanitize(self, unsafetext):
-    text = _clean(sanitize(
-        slugify(unsafetext, lower=False, spaces=True, ok=SLUG_OK + "().[]")))
-    return text
 
 
 class Udemy:
@@ -626,98 +616,6 @@ class Session(object):
         return
 
 
-# Thanks to a great open source utility youtube-dl ..
-class HTMLAttributeParser(compat_HTMLParser):  # pylint: disable=W
-    """Trivial HTML parser to gather the attributes for a single element"""
-
-    def __init__(self):
-        self.attrs = {}
-        compat_HTMLParser.__init__(self)
-
-    def handle_starttag(self, tag, attrs):
-        self.attrs = dict(attrs)
-
-
-def extract_attributes(html_element):
-    """Given a string for an HTML element such as
-    <el
-         a="foo" B="bar" c="&98;az" d=boz
-         empty= noval entity="&amp;"
-         sq='"' dq="'"
-    >
-    Decode and return a dictionary of attributes.
-    {
-        'a': 'foo', 'b': 'bar', c: 'baz', d: 'boz',
-        'empty': '', 'noval': None, 'entity': '&',
-        'sq': '"', 'dq': '\''
-    }.
-    NB HTMLParser is stricter in Python 2.6 & 3.2 than in later versions,
-    but the cases in the unit test will work for all of 2.6, 2.7, 3.2-3.5.
-    """
-    parser = HTMLAttributeParser()
-    try:
-        parser.feed(html_element)
-        parser.close()
-    except Exception:  # pylint: disable=W
-        pass
-    return parser.attrs
-
-
-def hidden_inputs(html):
-    html = re.sub(r"<!--(?:(?!<!--).)*-->", "", html)
-    hidden_inputs = {}  # pylint: disable=W
-    for entry in re.findall(r"(?i)(<input[^>]+>)", html):
-        attrs = extract_attributes(entry)
-        if not entry:
-            continue
-        if attrs.get("type") not in ("hidden", "submit"):
-            continue
-        name = attrs.get("name") or attrs.get("id")
-        value = attrs.get("value")
-        if name and value is not None:
-            hidden_inputs[name] = value
-    return hidden_inputs
-
-
-def search_regex(pattern,
-                 string,
-                 name,
-                 default=object(),
-                 fatal=True,
-                 flags=0,
-                 group=None):
-    """
-    Perform a regex search on the given string, using a single or a list of
-    patterns returning the first matching group.
-    In case of failure return a default value or raise a WARNING or a
-    RegexNotFoundError, depending on fatal, specifying the field name.
-    """
-    if isinstance(pattern, str):
-        mobj = re.search(pattern, string, flags)
-    else:
-        for p in pattern:
-            mobj = re.search(p, string, flags)
-            if mobj:
-                break
-
-    _name = name
-
-    if mobj:
-        if group is None:
-            # return the first matching group
-            return next(g for g in mobj.groups() if g is not None)
-        else:
-            return mobj.group(group)
-    elif default is not object():
-        return default
-    elif fatal:
-        print("[-] Unable to extract %s" % _name)
-        exit(0)
-    else:
-        print("[-] unable to extract %s" % _name)
-        exit(0)
-
-
 class UdemyAuth(object):
     def __init__(self, username="", password="", cache_session=False):
         self.username = username
@@ -787,58 +685,6 @@ with open(keyfile_path, 'r') as keyfile:
 keyfile = json.loads(keyfile)
 
 
-def durationtoseconds(period):
-    """
-    @author Jayapraveen
-    """
-
-    # Duration format in PTxDxHxMxS
-    if (period[:2] == "PT"):
-        period = period[2:]
-        day = int(period.split("D")[0] if 'D' in period else 0)
-        hour = int(period.split("H")[0].split("D")[-1] if 'H' in period else 0)
-        minute = int(
-            period.split("M")[0].split("H")[-1] if 'M' in period else 0)
-        second = period.split("S")[0].split("M")[-1]
-        print("Total time: " + str(day) + " days " + str(hour) + " hours " +
-              str(minute) + " minutes and " + str(second) + " seconds")
-        total_time = float(
-            str((day * 24 * 60 * 60) + (hour * 60 * 60) + (minute * 60) +
-                (int(second.split('.')[0]))) + '.' +
-            str(int(second.split('.')[-1])))
-        return total_time
-
-    else:
-        print("Duration Format Error")
-        return None
-
-
-def cleanup(path):
-    """
-    @author Jayapraveen
-    """
-    leftover_files = glob.glob(path + '/*.mp4', recursive=True)
-    for file_list in leftover_files:
-        try:
-            os.remove(file_list)
-        except OSError:
-            print(f"Error deleting file: {file_list}")
-    os.removedirs(path)
-
-
-def mux_process(video_title, video_filepath, audio_filepath, output_path):
-    """
-    @author Jayapraveen
-    """
-    if os.name == "nt":
-        command = "ffmpeg -y -i \"{}\" -i \"{}\" -acodec copy -vcodec copy -fflags +bitexact -map_metadata -1 -metadata title=\"{}\" \"{}\"".format(
-            video_filepath, audio_filepath, video_title, output_path)
-    else:
-        command = "nice -n 7 ffmpeg -y -i \"{}\" -i \"{}\" -acodec copy -vcodec copy -fflags +bitexact -map_metadata -1 -metadata title=\"{}\" \"{}\"".format(
-            video_filepath, audio_filepath, video_title, output_path)
-    os.system(command)
-
-
 def decrypt(kid, in_filepath, out_filepath):
     """
     @author Jayapraveen
@@ -897,93 +743,6 @@ def handle_segments(url, format_id, video_title,
         os.chdir(home_dir)
     except Exception as e:
         print(f"Error: ", e)
-
-
-def check_for_aria():
-    try:
-        subprocess.Popen(["aria2c", "-v"],
-                         stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL).wait()
-        return True
-    except FileNotFoundError:
-        return False
-    except Exception as e:
-        print(
-            "> Unexpected exception while checking for Aria2c, please tell the program author about this! ",
-            e)
-        return True
-
-
-def check_for_ffmpeg():
-    try:
-        subprocess.Popen(["ffmpeg"],
-                         stderr=subprocess.DEVNULL,
-                         stdout=subprocess.DEVNULL).wait()
-        return True
-    except FileNotFoundError:
-        return False
-    except Exception as e:
-        print(
-            "> Unexpected exception while checking for FFMPEG, please tell the program author about this! ",
-            e)
-        return True
-
-
-def check_for_mp4decrypt():
-    try:
-        subprocess.Popen(["mp4decrypt"],
-                         stderr=subprocess.DEVNULL,
-                         stdout=subprocess.DEVNULL).wait()
-        return True
-    except FileNotFoundError:
-        return False
-    except Exception as e:
-        print(
-            "> Unexpected exception while checking for MP4Decrypt, please tell the program author about this! ",
-            e)
-        return True
-
-
-def download(url, path, filename):
-    """
-    @author Puyodead1
-    """
-    file_size = int(requests.head(url).headers["Content-Length"])
-    if os.path.exists(path):
-        first_byte = os.path.getsize(path)
-    else:
-        first_byte = 0
-    if first_byte >= file_size:
-        return file_size
-    header = {"Range": "bytes=%s-%s" % (first_byte, file_size)}
-    pbar = tqdm(total=file_size,
-                initial=first_byte,
-                unit='B',
-                unit_scale=True,
-                desc=filename)
-    res = requests.get(url, headers=header, stream=True)
-    res.raise_for_status()
-    with (open(path, 'ab')) as f:
-        for chunk in res.iter_content(chunk_size=1024):
-            if chunk:
-                f.write(chunk)
-                pbar.update(1024)
-    pbar.close()
-    return file_size
-
-
-def download_aria(url, file_dir, filename):
-    """
-    @author Puyodead1
-    """
-    print("    > Downloading File...")
-    ret_code = subprocess.Popen([
-        "aria2c", url, "-o", filename, "-d", file_dir, "-j16", "-s20", "-x16",
-        "-c", "--auto-file-renaming=false", "--summary-interval=0"
-    ]).wait()
-    print("    > File Downloaded")
-
-    print("Return code: " + str(ret_code))
 
 
 def process_caption(caption, lecture_title, lecture_dir, keep_vtt, tries=0):
@@ -1222,75 +981,6 @@ def parse_new(_udemy, quality, skip_lectures, dl_assets, dl_captions,
                     if lang == caption_locale or caption_locale == "all":
                         process_caption(subtitle, lecture_title, chapter_dir,
                                         keep_vtt)
-
-
-def _print_course_info(course_data):
-    print("\n\n\n\n")
-    course_title = course_data.get("title")
-    chapter_count = course_data.get("total_chapters")
-    lecture_count = course_data.get("total_lectures")
-
-    print("> Course: {}".format(course_title))
-    print("> Total Chapters: {}".format(chapter_count))
-    print("> Total Lectures: {}".format(lecture_count))
-    print("\n")
-
-    chapters = course_data.get("chapters")
-    for chapter in chapters:
-        chapter_title = chapter.get("chapter_title")
-        chapter_index = chapter.get("chapter_index")
-        chapter_lecture_count = chapter.get("lecture_count")
-        chapter_lectures = chapter.get("lectures")
-
-        print("> Chapter: {} ({} of {})".format(chapter_title, chapter_index,
-                                                chapter_count))
-
-        for lecture in chapter_lectures:
-            lecture_title = lecture.get("lecture_title")
-            lecture_index = lecture.get("index")
-            lecture_asset_count = lecture.get("assets_count")
-            lecture_is_encrypted = lecture.get("is_encrypted")
-            lecture_subtitles = lecture.get("subtitles")
-            lecture_extension = lecture.get("extension")
-            lecture_sources = lecture.get("sources")
-            lecture_video_sources = lecture.get("video_sources")
-
-            if lecture_sources:
-                lecture_sources = sorted(lecture.get("sources"),
-                                         key=lambda x: int(x.get("height")),
-                                         reverse=True)
-            if lecture_video_sources:
-                lecture_video_sources = sorted(
-                    lecture.get("video_sources"),
-                    key=lambda x: int(x.get("height")),
-                    reverse=True)
-
-            if lecture_is_encrypted:
-                lecture_qualities = [
-                    "{}@{}x{}".format(x.get("type"), x.get("width"),
-                                      x.get("height"))
-                    for x in lecture_video_sources
-                ]
-            elif not lecture_is_encrypted and lecture_sources:
-                lecture_qualities = [
-                    "{}@{}x{}".format(x.get("type"), x.get("height"),
-                                      x.get("width")) for x in lecture_sources
-                ]
-
-            if lecture_extension:
-                continue
-
-            print("  > Lecture: {} ({} of {})".format(lecture_title,
-                                                      lecture_index,
-                                                      chapter_lecture_count))
-            print("    > DRM: {}".format(lecture_is_encrypted))
-            print("    > Asset Count: {}".format(lecture_asset_count))
-            print("    > Captions: {}".format(
-                [x.get("language") for x in lecture_subtitles]))
-            print("    > Qualities: {}".format(lecture_qualities))
-
-        if chapter_index != chapter_count:
-            print("\n\n")
 
 
 if __name__ == "__main__":

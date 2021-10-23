@@ -1,7 +1,12 @@
 import mp4parse
+import os
+import glob
 import codecs
 import widevine_pssh_pb2
 import base64
+import re
+from sanitize import sanitize, slugify, SLUG_OK
+
 
 def extract_kid(mp4_file):
     """
@@ -30,3 +35,29 @@ def extract_kid(mp4_file):
 
     # No Moof or PSSH header found
     return None
+
+
+def _clean(text):
+    ok = re.compile(r'[^\\/:*?!"<>|]')
+    text = "".join(x if ok.match(x) else "_" for x in text)
+    text = re.sub(r"\.+$", "", text.strip())
+    return text
+
+
+def _sanitize(self, unsafetext):
+    text = _clean(sanitize(
+        slugify(unsafetext, lower=False, spaces=True, ok=SLUG_OK + "().[]")))
+    return text
+
+
+def cleanup(path):
+    """
+    @author Jayapraveen
+    """
+    leftover_files = glob.glob(path + '/*.mp4', recursive=True)
+    for file_list in leftover_files:
+        try:
+            os.remove(file_list)
+        except OSError:
+            print(f"Error deleting file: {file_list}")
+    os.removedirs(path)
