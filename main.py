@@ -1383,6 +1383,7 @@ if __name__ == "__main__":
     with open(info_data_path, 'r') as info_data:
         csv_reader = csv.reader(info_data)
         for row in csv_reader:
+            print(row)
             args.course_url = row[0]
             args.keyfiles_encrypt = json.dumps({row[1]: row[2]})
 
