@@ -2,22 +2,19 @@ import argparse
 import glob
 import json
 import os
-import re
 import subprocess
 import sys
 import time
-import cloudscraper
 import m3u8
 import requests
 import yt_dlp
-from html.parser import HTMLParser as compat_HTMLParser
 from dotenv import load_dotenv
-from requests.exceptions import ConnectionError as conn_error
 from tqdm import tqdm
-from sanitize import sanitize, slugify, SLUG_OK
-from utils import extract_kid
+from utils import extract_kid, _print_course_info
 from vtt_to_srt import convert
 from _version import __version__
+from src.utils import sanitize
+from src.Udemy import Udemy
 
 home_dir = os.getcwd()
 download_dir = os.path.join(os.getcwd(), "out_dir")
@@ -31,751 +28,13 @@ HEADERS = {
     "Accept": "*/*",
     "Accept-Encoding": None,
 }
-LOGIN_URL = "https://www.udemy.com/join/login-popup/?ref=&display_type=popup&loc"
-LOGOUT_URL = "https://www.udemy.com/user/logout"
+
 COURSE_URL = "https://{portal_name}.udemy.com/api-2.0/courses/{course_id}/cached-subscriber-curriculum-items?fields[asset]=results,title,external_url,time_estimation,download_urls,slide_urls,filename,asset_type,captions,media_license_token,course_is_drmed,media_sources,stream_urls,body&fields[chapter]=object_index,title,sort_order&fields[lecture]=id,title,object_index,asset,supplementary_assets,view_html&page_size=10000"
 COURSE_SEARCH = "https://{portal_name}.udemy.com/api-2.0/users/me/subscribed-courses?fields[course]=id,url,title,published_title&page=1&page_size=500&search={course_name}"
 SUBSCRIBED_COURSES = "https://{portal_name}.udemy.com/api-2.0/users/me/subscribed-courses/?ordering=-last_accessed&fields[course]=id,title,url&page=1&page_size=12"
 MY_COURSES_URL = "https://{portal_name}.udemy.com/api-2.0/users/me/subscribed-courses?fields[course]=id,url,title,published_title&ordering=-last_accessed,-access_time&page=1&page_size=10000"
 COLLECTION_URL = "https://{portal_name}.udemy.com/api-2.0/users/me/subscribed-courses-collections/?collection_has_courses=True&course_limit=20&fields[course]=last_accessed_time,title,published_title&fields[user_has_subscribed_courses_collection]=@all&page=1&page_size=1000"
 
-
-def _clean(text):
-    ok = re.compile(r'[^\\/:*?!"<>|]')
-    text = "".join(x if ok.match(x) else "_" for x in text)
-    text = re.sub(r"\.+$", "", text.strip())
-    return text
-
-
-def _sanitize(self, unsafetext):
-    text = _clean(sanitize(
-        slugify(unsafetext, lower=False, spaces=True, ok=SLUG_OK + "().[]")))
-    return text
-
-
-class Udemy:
-    def __init__(self, access_token):
-        self.session = None
-        self.access_token = None
-        self.auth = UdemyAuth(cache_session=False)
-        if not self.session:
-            self.session, self.access_token = self.auth.authenticate(
-                access_token=access_token)
-
-        if self.session and self.access_token:
-            self.session._headers.update(
-                {"Authorization": "Bearer {}".format(self.access_token)})
-            self.session._headers.update({
-                "X-Udemy-Authorization":
-                    "Bearer {}".format(self.access_token)
-            })
-            print("Login Success")
-        else:
-            print("Login Failure!")
-            sys.exit(1)
-
-    def _extract_supplementary_assets(self, supp_assets):
-        _temp = []
-        for entry in supp_assets:
-            title = _clean(entry.get("title"))
-            filename = entry.get("filename")
-            download_urls = entry.get("download_urls")
-            external_url = entry.get("external_url")
-            asset_type = entry.get("asset_type").lower()
-            id = entry.get("id")
-            if asset_type == "file":
-                if download_urls and isinstance(download_urls, dict):
-                    extension = filename.rsplit(
-                        ".", 1)[-1] if "." in filename else ""
-                    download_url = download_urls.get("File", [])[0].get("file")
-                    _temp.append({
-                        "type": "file",
-                        "title": title,
-                        "filename": filename,
-                        "extension": extension,
-                        "download_url": download_url,
-                        "id": id
-                    })
-            elif asset_type == "sourcecode":
-                if download_urls and isinstance(download_urls, dict):
-                    extension = filename.rsplit(
-                        ".", 1)[-1] if "." in filename else ""
-                    download_url = download_urls.get("SourceCode",
-                                                     [])[0].get("file")
-                    _temp.append({
-                        "type": "source_code",
-                        "title": title,
-                        "filename": filename,
-                        "extension": extension,
-                        "download_url": download_url,
-                        "id": id
-                    })
-            elif asset_type == "externallink":
-                _temp.append({
-                    "type": "external_link",
-                    "title": title,
-                    "filename": filename,
-                    "extension": "txt",
-                    "download_url": external_url,
-                    "id": id
-                })
-        return _temp
-
-    def _extract_ppt(self, assets):
-        _temp = []
-        download_urls = assets.get("download_urls")
-        filename = assets.get("filename")
-        id = asset.get("id")
-        if download_urls and isinstance(download_urls, dict):
-            extension = filename.rsplit(".", 1)[-1] if "." in filename else ""
-            download_url = download_urls.get("Presentation", [])[0].get("file")
-            _temp.append({
-                "type": "presentation",
-                "filename": filename,
-                "extension": extension,
-                "download_url": download_url,
-                "id": id
-            })
-        return _temp
-
-    def _extract_file(self, assets):
-        _temp = []
-        download_urls = assets.get("download_urls")
-        filename = assets.get("filename")
-        id = asset.get("id")
-        if download_urls and isinstance(download_urls, dict):
-            extension = filename.rsplit(".", 1)[-1] if "." in filename else ""
-            download_url = download_urls.get("File", [])[0].get("file")
-            _temp.append({
-                "type": "file",
-                "filename": filename,
-                "extension": extension,
-                "download_url": download_url,
-                "id": id
-            })
-        return _temp
-
-    def _extract_ebook(self, assets):
-        _temp = []
-        download_urls = assets.get("download_urls")
-        filename = assets.get("filename")
-        id = asset.get("id")
-        if download_urls and isinstance(download_urls, dict):
-            extension = filename.rsplit(".", 1)[-1] if "." in filename else ""
-            download_url = download_urls.get("E-Book", [])[0].get("file")
-            _temp.append({
-                "type": "ebook",
-                "filename": filename,
-                "extension": extension,
-                "download_url": download_url,
-                "id": id
-            })
-        return _temp
-
-    def _extract_audio(self, assets):
-        _temp = []
-        download_urls = assets.get("download_urls")
-        filename = assets.get("filename")
-        id = asset.get("id")
-        if download_urls and isinstance(download_urls, dict):
-            extension = filename.rsplit(".", 1)[-1] if "." in filename else ""
-            download_url = download_urls.get("Audio", [])[0].get("file")
-            _temp.append({
-                "type": "audio",
-                "filename": filename,
-                "extension": extension,
-                "download_url": download_url,
-                "id": id
-            })
-        return _temp
-
-    def _extract_sources(self, sources, skip_hls):
-        _temp = []
-        if sources and isinstance(sources, list):
-            for source in sources:
-                label = source.get("label")
-                download_url = source.get("file")
-                if not download_url:
-                    continue
-                if label.lower() == "audio":
-                    continue
-                height = label if label else None
-                if height == "2160":
-                    width = "3840"
-                elif height == "1440":
-                    width = "2560"
-                elif height == "1080":
-                    width = "1920"
-                elif height == "720":
-                    width = "1280"
-                elif height == "480":
-                    width = "854"
-                elif height == "360":
-                    width = "640"
-                elif height == "240":
-                    width = "426"
-                else:
-                    width = "256"
-                if (source.get("type") == "application/x-mpegURL"
-                        or "m3u8" in download_url):
-                    if not skip_hls:
-                        out = self._extract_m3u8(download_url)
-                        if out:
-                            _temp.extend(out)
-                else:
-                    _type = source.get("type")
-                    _temp.append({
-                        "type": "video",
-                        "height": height,
-                        "width": width,
-                        "extension": _type.replace("video/", ""),
-                        "download_url": download_url,
-                    })
-        return _temp
-
-    def _extract_media_sources(self, sources):
-        _temp = []
-        if sources and isinstance(sources, list):
-            for source in sources:
-                _type = source.get("type")
-                src = source.get("src")
-
-                if _type == "application/dash+xml":
-                    out = self._extract_mpd(src)
-                    if out:
-                        _temp.extend(out)
-        return _temp
-
-    def _extract_subtitles(self, tracks):
-        _temp = []
-        if tracks and isinstance(tracks, list):
-            for track in tracks:
-                if not isinstance(track, dict):
-                    continue
-                if track.get("_class") != "caption":
-                    continue
-                download_url = track.get("url")
-                if not download_url or not isinstance(download_url, str):
-                    continue
-                lang = (track.get("language") or track.get("srclang")
-                        or track.get("label")
-                        or track["locale_id"].split("_")[0])
-                ext = "vtt" if "vtt" in download_url.rsplit(".",
-                                                            1)[-1] else "srt"
-                _temp.append({
-                    "type": "subtitle",
-                    "language": lang,
-                    "extension": ext,
-                    "download_url": download_url,
-                })
-        return _temp
-
-    def _extract_m3u8(self, url):
-        """extracts m3u8 streams"""
-        _temp = []
-        try:
-            resp = self.session._get(url)
-            resp.raise_for_status()
-            raw_data = resp.text
-            m3u8_object = m3u8.loads(raw_data)
-            playlists = m3u8_object.playlists
-            seen = set()
-            for pl in playlists:
-                resolution = pl.stream_info.resolution
-                codecs = pl.stream_info.codecs
-                if not resolution:
-                    continue
-                if not codecs:
-                    continue
-                width, height = resolution
-                download_url = pl.uri
-                if height not in seen:
-                    seen.add(height)
-                    _temp.append({
-                        "type": "hls",
-                        "height": height,
-                        "width": width,
-                        "extension": "mp4",
-                        "download_url": download_url,
-                    })
-        except Exception as error:
-            print(f"Udemy Says : '{error}' while fetching hls streams..")
-        return _temp
-
-    def _extract_mpd(self, url):
-        """extracts mpd streams"""
-        _temp = []
-        try:
-            ytdl = yt_dlp.YoutubeDL({
-                'quiet': True,
-                'no_warnings': True,
-                "allow_unplayable_formats": True
-            })
-            results = ytdl.extract_info(url,
-                                        download=False,
-                                        force_generic_extractor=True)
-            seen = set()
-            formats = results.get("formats")
-
-            format_id = results.get("format_id")
-            best_audio_format_id = format_id.split("+")[1]
-            best_audio = next((x for x in formats
-                               if x.get("format_id") == best_audio_format_id),
-                              None)
-            for f in formats:
-                if "video" in f.get("format_note"):
-                    # is a video stream
-                    format_id = f.get("format_id")
-                    extension = f.get("ext")
-                    height = f.get("height")
-                    width = f.get("width")
-
-                    if height and height not in seen:
-                        seen.add(height)
-                        _temp.append({
-                            "type": "dash",
-                            "height": str(height),
-                            "width": str(width),
-                            "format_id": f"{format_id},{best_audio_format_id}",
-                            "extension": extension,
-                            "download_url": f.get("manifest_url")
-                        })
-                else:
-                    # unknown format type
-                    continue
-        except Exception as error:
-            print(f"Error fetching MPD streams: '{error}'")
-        return _temp
-
-    def extract_course_name(self, url):
-        """
-        @author r0oth3x49
-        """
-        obj = re.search(
-            r"(?i)(?://(?P<portal_name>.+?).udemy.com/(?:course(/draft)*/)?(?P<name_or_id>[a-zA-Z0-9_-]+))",
-            url,
-        )
-        if obj:
-            return obj.group("portal_name"), obj.group("name_or_id")
-
-    def _subscribed_courses(self, portal_name, course_name):
-        results = []
-        self.session._headers.update({
-            "Host":
-                "{portal_name}.udemy.com".format(portal_name=portal_name),
-            "Referer":
-                "https://{portal_name}.udemy.com/home/my-courses/search/?q={course_name}"
-                    .format(portal_name=portal_name, course_name=course_name),
-        })
-        url = COURSE_SEARCH.format(portal_name=portal_name,
-                                   course_name=course_name)
-        try:
-            webpage = self.session._get(url).json()
-        except conn_error as error:
-            print(f"Udemy Says: Connection error, {error}")
-            time.sleep(0.8)
-            sys.exit(0)
-        except (ValueError, Exception) as error:
-            print(f"Udemy Says: {error} on {url}")
-            time.sleep(0.8)
-            sys.exit(0)
-        else:
-            results = webpage.get("results", [])
-        return results
-
-    def _extract_course_json(self, url, course_id, portal_name):
-        self.session._headers.update({"Referer": url})
-        url = COURSE_URL.format(portal_name=portal_name, course_id=course_id)
-        try:
-            resp = self.session._get(url)
-            if resp.status_code in [502, 503]:
-                print(
-                    "> The course content is large, using large content extractor..."
-                )
-                resp = self._extract_large_course_content(url=url)
-            else:
-                resp = resp.json()
-        except conn_error as error:
-            print(f"Udemy Says: Connection error, {error}")
-            time.sleep(0.8)
-            sys.exit(0)
-        except (ValueError, Exception):
-            resp = self._extract_large_course_content(url=url)
-            return resp
-        else:
-            return resp
-
-    def _extract_large_course_content(self, url):
-        url = url.replace("10000", "50") if url.endswith("10000") else url
-        try:
-            data = self.session._get(url).json()
-        except conn_error as error:
-            print(f"Udemy Says: Connection error, {error}")
-            time.sleep(0.8)
-            sys.exit(0)
-        else:
-            _next = data.get("next")
-            while _next:
-                print("Downloading course information.. ")
-                try:
-                    resp = self.session._get(_next).json()
-                except conn_error as error:
-                    print(f"Udemy Says: Connection error, {error}")
-                    time.sleep(0.8)
-                    sys.exit(0)
-                else:
-                    _next = resp.get("next")
-                    results = resp.get("results")
-                    if results and isinstance(results, list):
-                        for d in resp["results"]:
-                            data["results"].append(d)
-            return data
-
-    def __extract_course(self, response, course_name):
-        _temp = {}
-        if response:
-            for entry in response:
-                course_id = str(entry.get("id"))
-                published_title = entry.get("published_title")
-                if course_name in (published_title, course_id):
-                    _temp = entry
-                    break
-        return _temp
-
-    def _my_courses(self, portal_name):
-        results = []
-        try:
-            url = MY_COURSES_URL.format(portal_name=portal_name)
-            webpage = self.session._get(url).json()
-        except conn_error as error:
-            print(f"Udemy Says: Connection error, {error}")
-            time.sleep(0.8)
-            sys.exit(0)
-        except (ValueError, Exception) as error:
-            print(f"Udemy Says: {error}")
-            time.sleep(0.8)
-            sys.exit(0)
-        else:
-            results = webpage.get("results", [])
-        return results
-
-    def _subscribed_collection_courses(self, portal_name):
-        url = COLLECTION_URL.format(portal_name=portal_name)
-        courses_lists = []
-        try:
-            webpage = self.session._get(url).json()
-        except conn_error as error:
-            print(f"Udemy Says: Connection error, {error}")
-            time.sleep(0.8)
-            sys.exit(0)
-        except (ValueError, Exception) as error:
-            print(f"Udemy Says: {error}")
-            time.sleep(0.8)
-            sys.exit(0)
-        else:
-            results = webpage.get("results", [])
-            if results:
-                [
-                    courses_lists.extend(courses.get("courses", []))
-                    for courses in results if courses.get("courses", [])
-                ]
-        return courses_lists
-
-    def _archived_courses(self, portal_name):
-        results = []
-        try:
-            url = MY_COURSES_URL.format(portal_name=portal_name)
-            url = f"{url}&is_archived=true"
-            webpage = self.session._get(url).json()
-        except conn_error as error:
-            print(f"Udemy Says: Connection error, {error}")
-            time.sleep(0.8)
-            sys.exit(0)
-        except (ValueError, Exception) as error:
-            print(f"Udemy Says: {error}")
-            time.sleep(0.8)
-            sys.exit(0)
-        else:
-            results = webpage.get("results", [])
-        return results
-
-    def _my_courses(self, portal_name):
-        results = []
-        try:
-            url = MY_COURSES_URL.format(portal_name=portal_name)
-            webpage = self.session._get(url).json()
-        except conn_error as error:
-            print(f"Udemy Says: Connection error, {error}")
-            time.sleep(0.8)
-            sys.exit(0)
-        except (ValueError, Exception) as error:
-            print(f"Udemy Says: {error}")
-            time.sleep(0.8)
-            sys.exit(0)
-        else:
-            results = webpage.get("results", [])
-        return results
-
-    def _subscribed_collection_courses(self, portal_name):
-        url = COLLECTION_URL.format(portal_name=portal_name)
-        courses_lists = []
-        try:
-            webpage = self.session._get(url).json()
-        except conn_error as error:
-            print(f"Udemy Says: Connection error, {error}")
-            time.sleep(0.8)
-            sys.exit(0)
-        except (ValueError, Exception) as error:
-            print(f"Udemy Says: {error}")
-            time.sleep(0.8)
-            sys.exit(0)
-        else:
-            results = webpage.get("results", [])
-            if results:
-                [
-                    courses_lists.extend(courses.get("courses", []))
-                    for courses in results if courses.get("courses", [])
-                ]
-        return courses_lists
-
-    def _archived_courses(self, portal_name):
-        results = []
-        try:
-            url = MY_COURSES_URL.format(portal_name=portal_name)
-            url = f"{url}&is_archived=true"
-            webpage = self.session._get(url).json()
-        except conn_error as error:
-            print(f"Udemy Says: Connection error, {error}")
-            time.sleep(0.8)
-            sys.exit(0)
-        except (ValueError, Exception) as error:
-            print(f"Udemy Says: {error}")
-            time.sleep(0.8)
-            sys.exit(0)
-        else:
-            results = webpage.get("results", [])
-        return results
-
-    def _extract_course_info(self, url):
-        portal_name, course_name = self.extract_course_name(url)
-        course = {}
-        results = self._subscribed_courses(portal_name=portal_name,
-                                           course_name=course_name)
-        course = self.__extract_course(response=results,
-                                       course_name=course_name)
-        if not course:
-            results = self._my_courses(portal_name=portal_name)
-            course = self.__extract_course(response=results,
-                                           course_name=course_name)
-        if not course:
-            results = self._subscribed_collection_courses(
-                portal_name=portal_name)
-            course = self.__extract_course(response=results,
-                                           course_name=course_name)
-        if not course:
-            results = self._archived_courses(portal_name=portal_name)
-            course = self.__extract_course(response=results,
-                                           course_name=course_name)
-
-        if course:
-            course.update({"portal_name": portal_name})
-            return course.get("id"), course
-        if not course:
-            print("Downloading course information, course id not found .. ")
-            print(
-                "It seems either you are not enrolled or you have to visit the course atleast once while you are logged in.",
-            )
-            print("Trying to logout now...", )
-            self.session.terminate()
-            print("Logged out successfully.", )
-            sys.exit(0)
-
-
-class Session(object):
-    def __init__(self):
-        self._headers = HEADERS
-        self._session = requests.sessions.Session()
-
-    def _set_auth_headers(self, access_token="", client_id=""):
-        self._headers["Authorization"] = "Bearer {}".format(access_token)
-        self._headers["X-Udemy-Authorization"] = "Bearer {}".format(
-            access_token)
-
-    def _get(self, url):
-        for i in range(10):
-            session = self._session.get(url, headers=self._headers)
-            if session.ok or session.status_code in [502, 503]:
-                return session
-            if not session.ok:
-                print('Failed request ' + url)
-                print(f"{session.status_code} {session.reason}, retrying (attempt {i} )...")
-                time.sleep(0.8)
-
-    def _post(self, url, data, redirect=True):
-        session = self._session.post(url,
-                                     data,
-                                     headers=self._headers,
-                                     allow_redirects=redirect)
-        if session.ok:
-            return session
-        if not session.ok:
-            raise Exception(f"{session.status_code} {session.reason}")
-
-    def terminate(self):
-        self._set_auth_headers()
-        return
-
-
-# Thanks to a great open source utility youtube-dl ..
-class HTMLAttributeParser(compat_HTMLParser):  # pylint: disable=W
-    """Trivial HTML parser to gather the attributes for a single element"""
-
-    def __init__(self):
-        self.attrs = {}
-        compat_HTMLParser.__init__(self)
-
-    def handle_starttag(self, tag, attrs):
-        self.attrs = dict(attrs)
-
-
-def extract_attributes(html_element):
-    """Given a string for an HTML element such as
-    <el
-         a="foo" B="bar" c="&98;az" d=boz
-         empty= noval entity="&amp;"
-         sq='"' dq="'"
-    >
-    Decode and return a dictionary of attributes.
-    {
-        'a': 'foo', 'b': 'bar', c: 'baz', d: 'boz',
-        'empty': '', 'noval': None, 'entity': '&',
-        'sq': '"', 'dq': '\''
-    }.
-    NB HTMLParser is stricter in Python 2.6 & 3.2 than in later versions,
-    but the cases in the unit test will work for all of 2.6, 2.7, 3.2-3.5.
-    """
-    parser = HTMLAttributeParser()
-    try:
-        parser.feed(html_element)
-        parser.close()
-    except Exception:  # pylint: disable=W
-        pass
-    return parser.attrs
-
-
-def hidden_inputs(html):
-    html = re.sub(r"<!--(?:(?!<!--).)*-->", "", html)
-    hidden_inputs = {}  # pylint: disable=W
-    for entry in re.findall(r"(?i)(<input[^>]+>)", html):
-        attrs = extract_attributes(entry)
-        if not entry:
-            continue
-        if attrs.get("type") not in ("hidden", "submit"):
-            continue
-        name = attrs.get("name") or attrs.get("id")
-        value = attrs.get("value")
-        if name and value is not None:
-            hidden_inputs[name] = value
-    return hidden_inputs
-
-
-def search_regex(pattern,
-                 string,
-                 name,
-                 default=object(),
-                 fatal=True,
-                 flags=0,
-                 group=None):
-    """
-    Perform a regex search on the given string, using a single or a list of
-    patterns returning the first matching group.
-    In case of failure return a default value or raise a WARNING or a
-    RegexNotFoundError, depending on fatal, specifying the field name.
-    """
-    if isinstance(pattern, str):
-        mobj = re.search(pattern, string, flags)
-    else:
-        for p in pattern:
-            mobj = re.search(p, string, flags)
-            if mobj:
-                break
-
-    _name = name
-
-    if mobj:
-        if group is None:
-            # return the first matching group
-            return next(g for g in mobj.groups() if g is not None)
-        else:
-            return mobj.group(group)
-    elif default is not object():
-        return default
-    elif fatal:
-        print("[-] Unable to extract %s" % _name)
-        exit(0)
-    else:
-        print("[-] unable to extract %s" % _name)
-        exit(0)
-
-
-class UdemyAuth(object):
-    def __init__(self, username="", password="", cache_session=False):
-        self.username = username
-        self.password = password
-        self._cache = cache_session
-        self._session = Session()
-        self._cloudsc = cloudscraper.create_scraper()
-
-    def _form_hidden_input(self, form_id):
-        try:
-            resp = self._cloudsc.get(LOGIN_URL)
-            resp.raise_for_status()
-            webpage = resp.text
-        except conn_error as error:
-            raise error
-        else:
-            login_form = hidden_inputs(
-                search_regex(
-                    r'(?is)<form[^>]+?id=(["\'])%s\1[^>]*>(?P<form>.+?)</form>'
-                    % form_id,
-                    webpage,
-                    "%s form" % form_id,
-                    group="form",
-                ))
-            login_form.update({
-                "email": self.username,
-                "password": self.password
-            })
-            return login_form
-
-    def authenticate(self, access_token="", client_id=""):
-        if not access_token and not client_id:
-            data = self._form_hidden_input(form_id="login-form")
-            self._cloudsc.headers.update({"Referer": LOGIN_URL})
-            auth_response = self._cloudsc.post(LOGIN_URL,
-                                               data=data,
-                                               allow_redirects=False)
-            auth_cookies = auth_response.cookies
-
-            access_token = auth_cookies.get("access_token", "")
-            client_id = auth_cookies.get("client_id", "")
-
-        if access_token:
-            # dump cookies to configs
-            # if self._cache:
-            #     _ = to_configs(
-            #         username=self.username,
-            #         password=self.password,
-            #         cookies=f"access_token={access_token}",
-            #     )
-            self._session._set_auth_headers(access_token=access_token,
-                                            client_id=client_id)
-            self._session._session.cookies.update(
-                {"access_token": access_token})
-            return self._session, access_token
-        else:
-            self._session._set_auth_headers()
-            return None, None
 
 
 if not os.path.exists(download_dir):
@@ -1224,75 +483,6 @@ def parse_new(_udemy, quality, skip_lectures, dl_assets, dl_captions,
                                         keep_vtt)
 
 
-def _print_course_info(course_data):
-    print("\n\n\n\n")
-    course_title = course_data.get("title")
-    chapter_count = course_data.get("total_chapters")
-    lecture_count = course_data.get("total_lectures")
-
-    print("> Course: {}".format(course_title))
-    print("> Total Chapters: {}".format(chapter_count))
-    print("> Total Lectures: {}".format(lecture_count))
-    print("\n")
-
-    chapters = course_data.get("chapters")
-    for chapter in chapters:
-        chapter_title = chapter.get("chapter_title")
-        chapter_index = chapter.get("chapter_index")
-        chapter_lecture_count = chapter.get("lecture_count")
-        chapter_lectures = chapter.get("lectures")
-
-        print("> Chapter: {} ({} of {})".format(chapter_title, chapter_index,
-                                                chapter_count))
-
-        for lecture in chapter_lectures:
-            lecture_title = lecture.get("lecture_title")
-            lecture_index = lecture.get("index")
-            lecture_asset_count = lecture.get("assets_count")
-            lecture_is_encrypted = lecture.get("is_encrypted")
-            lecture_subtitles = lecture.get("subtitles")
-            lecture_extension = lecture.get("extension")
-            lecture_sources = lecture.get("sources")
-            lecture_video_sources = lecture.get("video_sources")
-
-            if lecture_sources:
-                lecture_sources = sorted(lecture.get("sources"),
-                                         key=lambda x: int(x.get("height")),
-                                         reverse=True)
-            if lecture_video_sources:
-                lecture_video_sources = sorted(
-                    lecture.get("video_sources"),
-                    key=lambda x: int(x.get("height")),
-                    reverse=True)
-
-            if lecture_is_encrypted:
-                lecture_qualities = [
-                    "{}@{}x{}".format(x.get("type"), x.get("width"),
-                                      x.get("height"))
-                    for x in lecture_video_sources
-                ]
-            elif not lecture_is_encrypted and lecture_sources:
-                lecture_qualities = [
-                    "{}@{}x{}".format(x.get("type"), x.get("height"),
-                                      x.get("width")) for x in lecture_sources
-                ]
-
-            if lecture_extension:
-                continue
-
-            print("  > Lecture: {} ({} of {})".format(lecture_title,
-                                                      lecture_index,
-                                                      chapter_lecture_count))
-            print("    > DRM: {}".format(lecture_is_encrypted))
-            print("    > Asset Count: {}".format(lecture_asset_count))
-            print("    > Captions: {}".format(
-                [x.get("language") for x in lecture_subtitles]))
-            print("    > Qualities: {}".format(lecture_qualities))
-
-        if chapter_index != chapter_count:
-            print("\n\n")
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Udemy Downloader')
     parser.add_argument("-c",
@@ -1302,81 +492,51 @@ if __name__ == "__main__":
                         help="The URL of the course to download",
                         required=True)
     parser.add_argument(
-        "-b",
-        "--bearer",
-        dest="bearer_token",
-        type=str,
-        help="The Bearer token to use",
+        "-b", "--bearer", dest="bearer_token", type=str, help="The Bearer token to use",
     )
     parser.add_argument(
-        "-q",
-        "--quality",
-        dest="quality",
-        type=int,
+        "-q", "--quality", dest="quality", type=int,
         help="Download specific video quality. If the requested quality isn't available, the closest quality will be used. If not specified, the best quality will be downloaded for each lecture",
     )
     parser.add_argument(
-        "-l",
-        "--lang",
-        dest="lang",
-        type=str,
+        "-l", "--lang", dest="lang", type=str,
         help="The language to download for captions, specify 'all' to download all captions (Default is 'en')",
     )
     parser.add_argument(
-        "-cd",
-        "--concurrent-downloads",
-        dest="concurrent_downloads",
-        type=int,
+        "-cd", "--concurrent-downloads", dest="concurrent_downloads", type=int,
         help="The number of maximum concurrent downloads for segments (HLS and DASH, must be a number 1-30)",
     )
     parser.add_argument(
-        "--skip-lectures",
-        dest="skip_lectures",
-        action="store_true",
+        "--skip-lectures", dest="skip_lectures", action="store_true",
         help="If specified, lectures won't be downloaded",
     )
     parser.add_argument(
-        "--download-assets",
-        dest="download_assets",
-        action="store_true",
+        "--download-assets", dest="download_assets", action="store_true",
         help="If specified, lecture assets will be downloaded",
     )
     parser.add_argument(
-        "--download-captions",
-        dest="download_captions",
-        action="store_true",
+        "--download-captions", dest="download_captions", action="store_true",
         help="If specified, captions will be downloaded",
     )
     parser.add_argument(
-        "--keep-vtt",
-        dest="keep_vtt",
-        action="store_true",
+        "--keep-vtt", dest="keep_vtt", action="store_true",
         help="If specified, .vtt files won't be removed",
     )
     parser.add_argument(
-        "--skip-hls",
-        dest="skip_hls",
-        action="store_true",
+        "--skip-hls", dest="skip_hls", action="store_true",
         help="If specified, hls streams will be skipped (faster fetching) (hls streams usually contain 1080p quality for non-drm lectures)",
     )
     parser.add_argument(
-        "--info",
-        dest="info",
-        action="store_true",
+        "--info", dest="info", action="store_true",
         help="If specified, only course information will be printed, nothing will be downloaded",
     )
 
     parser.add_argument(
-        "--save-to-file",
-        dest="save_to_file",
-        action="store_true",
+        "--save-to-file", dest="save_to_file", action="store_true",
         help=argparse.SUPPRESS,
     )
     parser.add_argument(
-        "--load-from-file",
-        dest="load_from_file",
-        action="store_true",
-        help=argparse.SUPPRESS,
+        "--load-from-file", dest="load_from_file", action="store_true", help=argparse.SUPPRESS,
     )
     parser.add_argument("-v", "--version", action="version",
                         version='You are running version {version}'.format(version=__version__))
@@ -1430,18 +590,13 @@ if __name__ == "__main__":
 
     mp4decrypt_ret_val = check_for_mp4decrypt()
     if not mp4decrypt_ret_val:
-        print(
-            "> MP4Decrypt is missing from your system or path! (This is part of Bento4 tools)"
-        )
+        print("> MP4Decrypt is missing from your system or path! (This is part of Bento4 tools)")
         sys.exit(1)
 
     if args.load_from_file:
-        print(
-            "> 'load_from_file' was specified, data will be loaded from json files instead of fetched"
-        )
+        print("> 'load_from_file' was specified, data will be loaded from json files instead of fetched")
     if args.save_to_file:
-        print(
-            "> 'save_to_file' was specified, data will be saved to json files")
+        print("> 'save_to_file' was specified, data will be saved to json files")
 
     if not os.path.isfile(keyfile_path):
         print("> Keyfile not found! Did you rename the file correctly?")
@@ -1550,9 +705,7 @@ if __name__ == "__main__":
                             counter += 1
 
                     if lecture_id:
-                        print(
-                            f"Processing {course.index(entry)} of {len(course)}"
-                        )
+                        print(f"Processing {course.index(entry)} of {len(course)}")
                         retVal = []
 
                         if isinstance(asset, dict):
@@ -1610,30 +763,18 @@ if __name__ == "__main__":
                                 })
                             else:
                                 lectures.append({
-                                    "index":
-                                        lecture_counter,
-                                    "lecture_index":
-                                        lecture_index,
-                                    "lectures_id":
-                                        lecture_id,
-                                    "lecture_title":
-                                        lecture_title,
-                                    "html_content":
-                                        asset.get("body"),
-                                    "extension":
-                                        "html",
-                                    "assets":
-                                        retVal,
-                                    "assets_count":
-                                        len(retVal),
-                                    "subtitle_count":
-                                        0,
-                                    "sources_count":
-                                        0,
-                                    "is_encrypted":
-                                        False,
-                                    "asset_id":
-                                        asset.get("id")
+                                    "index": lecture_counter,
+                                    "lecture_index": lecture_index,
+                                    "lectures_id": lecture_id,
+                                    "lecture_title": lecture_title,
+                                    "html_content": asset.get("body"),
+                                    "extension": "html",
+                                    "assets": retVal,
+                                    "assets_count": len(retVal),
+                                    "subtitle_count": 0,
+                                    "sources_count": 0,
+                                    "is_encrypted": False,
+                                    "asset_id": asset.get("id")
                                 })
                         else:
                             # encrypted
