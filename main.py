@@ -1,5 +1,6 @@
 import argparse
 import glob
+import csv
 import json
 import os
 import re
@@ -25,7 +26,7 @@ from _version import __version__
 home_dir = os.getcwd()
 download_dir = os.path.join(os.getcwd(), "out_dir")
 keyfile_path = os.path.join(os.getcwd(), "keyfile.json")
-info_data = os.path.join(os.getcwd(), "info.csv")
+info_data_path = os.path.join(os.getcwd(), "info.csv")
 retry = 3
 downloader = None
 HEADERS = {
@@ -681,6 +682,7 @@ class UdemyAuth(object):
 if not os.path.exists(download_dir):
     os.makedirs(download_dir)
 
+
 # # Get the keys
 # with open(keyfile_path, 'r') as keyfile:
 #     keyfile = keyfile.read()
@@ -1046,10 +1048,6 @@ def get_course_udemy(args):
     if args.save_to_file:
         print("> 'save_to_file' was specified, data will be saved to json files")
 
-    if not os.path.isfile(keyfile_path):
-        print("> Keyfile not found! Did you rename the file correctly?")
-        sys.exit(1)
-
     access_token = None
     if args.bearer_token:
         access_token = args.bearer_token
@@ -1380,14 +1378,12 @@ if __name__ == "__main__":
                         version='You are running version {version}'.format(version=__version__))
     args = parser.parse_args()
 
-    args.course_url = "https://fpt-software.udemy.com/course/grpc-csharp"
-    args.keyfiles_encrypt = {"198429f5c56c419ab32af7f3d763d6d5": "08fe8610e772b69ef37d5ac23c5f614c"}
     args.bearer_token = "0dVcR5LCz0YsjL8sG6kYHSPjhR0bvwGdxWlrJ2Jh"
+    # Get the keys
+    with open(info_data_path, 'r') as info_data:
+        csv_reader = csv.reader(info_data)
+        for row in csv_reader:
+            args.course_url = row[0]
+            args.keyfiles_encrypt = json.dumps({row[1]: row[2]})
 
-    get_course_udemy(args)
-
-    args.course_url = "https://fpt-software.udemy.com/course/grpc-nodejs"
-    args.keyfiles_encrypt = {"a327fa9c81a844fb80cc889be9809468": "adc0bd36f032b0a4fbcce6cacf993103"}
-    args.bearer_token = "0dVcR5LCz0YsjL8sG6kYHSPjhR0bvwGdxWlrJ2Jh"
-
-    get_course_udemy(args)
+            get_course_udemy(args)
