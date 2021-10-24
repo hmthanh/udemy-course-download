@@ -11,7 +11,6 @@ import cloudscraper
 import m3u8
 import requests
 import yt_dlp
-from dotenv import load_dotenv
 from requests.exceptions import ConnectionError as conn_error
 from utils import extract_kid
 from vtt_to_srt import convert
@@ -25,7 +24,6 @@ from _version import __version__
 
 home_dir = os.getcwd()
 download_dir = os.path.join(os.getcwd(), "out_dir")
-keyfile_path = os.path.join(os.getcwd(), "keyfile.json")
 info_data_path = os.path.join(os.getcwd(), "info.csv")
 retry = 3
 downloader = None
@@ -695,7 +693,8 @@ def decrypt(kid, in_filepath, out_filepath, keyfiles_encrypt):
     """
     print("> Decrypting, this might take a minute...")
     try:
-        key = keyfiles_encrypt[kid.lower()]
+        keyfile = json.loads(keyfiles_encrypt)
+        key = keyfile[kid.lower()]
         if os.name == "nt":
             os.system(f"mp4decrypt --key 1:%s \"%s\" \"%s\"" %
                       (key, in_filepath, out_filepath))
@@ -1379,12 +1378,13 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     args.bearer_token = "0dVcR5LCz0YsjL8sG6kYHSPjhR0bvwGdxWlrJ2Jh"
+
     # Get the keys
     with open(info_data_path, 'r') as info_data:
         csv_reader = csv.reader(info_data)
         for row in csv_reader:
             print(row)
             args.course_url = row[0]
-            args.keyfiles_encrypt = json.dumps({row[1]: row[2]})
+            args.keyfiles_encrypt = json.dumps({row[1].strip(): row[2].strip()})
 
             get_course_udemy(args)
