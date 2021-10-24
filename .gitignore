@@ -87,7 +87,6 @@ celerybeat-schedule
 *.sage.py
 
 # Environments
-.env
 .venv
 env/
 venv/
@@ -113,7 +112,6 @@ dmypy.json
 # Pyre type checker
 .pyre/
 *.mp4
-keyfile.json
 test_data.json
 out_dir
 working_dir

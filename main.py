@@ -681,12 +681,6 @@ if not os.path.exists(download_dir):
     os.makedirs(download_dir)
 
 
-# # Get the keys
-# with open(keyfile_path, 'r') as keyfile:
-#     keyfile = keyfile.read()
-# keyfile = json.loads(keyfile)
-
-
 def decrypt(kid, in_filepath, out_filepath, keyfiles_encrypt):
     """
     @author Jayapraveen
