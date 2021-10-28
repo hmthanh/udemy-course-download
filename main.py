@@ -984,7 +984,7 @@ def get_course_udemy(args):
     dl_assets = True
     skip_lectures = False
     dl_captions = True
-    caption_locale = "all"
+    caption_locale = "en"
     quality = None
     bearer_token = None
     portal_name = None
