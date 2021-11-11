@@ -1,6 +1,7 @@
 # Udemy course downloader
 
 - Download Udemy course Enrolled and Udemy enterprise
+https://pythonrepo.com/repo/Puyodead1-udemy-downloader-python-downloader
 
 ## Requirements
 

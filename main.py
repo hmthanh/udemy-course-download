@@ -697,6 +697,7 @@ def decrypt(kid, in_filepath, out_filepath, keyfiles_encrypt):
                       (key, in_filepath, out_filepath))
         print("> Decryption complete")
     except KeyError:
+        sys.exit(1)
         raise KeyError("Key not found")
 
 
@@ -1372,6 +1373,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     args.bearer_token = "0dVcR5LCz0YsjL8sG6kYHSPjhR0bvwGdxWlrJ2Jh"
+    args.lang = "all"
 
     # Get the keys
     with open(info_data_path, 'r') as info_data:
