@@ -1070,7 +1070,7 @@ def get_course_udemy(args):
         portal_name = course_json.get("portal_name")
     else:
         course_json = udemy._extract_course_json(args.course_url, course_id, portal_name)
-    if args.save_to_file:
+    if True: #args.save_to_file:
         with open(os.path.join(os.getcwd(), "saved", "course_content.json"), 'w') as f:
             f.write(json.dumps(course_json))
             f.close()
@@ -1302,7 +1302,7 @@ def get_course_udemy(args):
             if entry
         ])
 
-        if args.save_to_file:
+        if True: #args.save_to_file:
             with open(os.path.join(os.getcwd(), "saved", "_udemy.json"),
                       'w') as f:
                 f.write(json.dumps(_udemy))
